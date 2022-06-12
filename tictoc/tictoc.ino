@@ -1,30 +1,45 @@
+/**
+ * Adapted sketch for the modified "LittleBen" module by Quinie
+ * https://www.quinie.nl/
+ * 
+ * modified by: Luisgongod
+ * https://github.com/luisgongod/littlebenny
+ * */
 
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// OLED display
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
+//Oled display settings
+#define SCREEN_WIDTH 128 
+#define SCREEN_HEIGHT 32 
+#define OLED_RESET     4 
+#define SCREEN_ADDRESS 0x3C
 
-#define OLED_RESET     4 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+// Interrupt pin for the buttons
+#define startTriggerPin 3 // Start trigger pin
+#define stopTriggerPin 2 // Stop trigger pin
+
+// Rotary Encoder Inputs pins
+#define inputCLK 9
+#define inputDT 8
+#define inputSW 7
+
+//  Max min values
+#define max_ppb 4
+#define min_ppb 1
+#define max_bpm 240
+#define min_bpm 60
+#define gate_step 5
+#define max_gate_lenght 50
+#define min_gate_lenght 10
+#define debouncetime 10 //for buttons, in ms
+
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-#define NUMFLAKES     10 // Number of snowflakes in the animation example
-
-#define LOGO_HEIGHT   16
-#define LOGO_WIDTH    16
-
-String clk_status[4] = { "PLAY", "PAUSE", "STOP", "ERR!"};
-
-int bpm = 120; //initial beats per minute
-byte ppb = 4; //pulses per beat
-int gate_lenght = 10; //ms (5 to 50ms) max of 62ms for 16ppb @ 240 BPM
-// bool play = true; //1 for play, 0 for pause or stop
-bool focus_state = false; //1 for focus ON, 0 for focus OFF
-
+//status definiton items
 byte enum_focus_items = 3;
 enum enum_focus {
     FOCUS_BPM,
@@ -39,10 +54,7 @@ enum enum_clock_state {
     CLK_STOP
 };
 
-byte clk_item = CLK_PLAY;
-
-#define startTriggerPin 3 // Start trigger pin
-#define stopTriggerPin 2 // Stop trigger pin
+String clk_status[4] = { "PLAY", "PAUSE", "STOP", "ERR!"};
 
 // 74HC595 pins 
 byte outputLatchPin = 5; 
@@ -55,32 +67,26 @@ byte previousStateSW;
 byte currentStateCLK;
 byte previousStateCLK; 
 
-// Rotary Encoder Inputs pins
-#define inputCLK 9
-#define inputDT 8
-#define inputSW 7
-
-#define max_ppb 4
-#define min_ppb 1
-#define max_bpm 240
-#define min_bpm 60
-#define max_gate_lenght 50
-#define min_gate_lenght 10
-// #define max_beats_count 16
-
 // Current menu item
 byte focusItem = 0;
 byte beat_counter = 0;
+byte beat_counter_old = 0;
+
+// Initial values
+int bpm = 120; //initial beats per minute
+byte ppb = 4; //initial pulses per beat
+int gate_lenght = 10; //ms (10 to 50ms) max of 62ms for 16ppb @ 240 BPM
+byte clk_item = CLK_PLAY; //initial clock state
+bool ready2print = false; //true if the display needs to be updated
 
 unsigned long eventTime_1_beat ;
-const unsigned long eventTime_2_screen = 500;//half the interval in ms
-
 unsigned long previousTime_1 = 0;
 unsigned long previousTime_2 = 0;
-bool gate_up = false;
+bool gate_up = false; //true if the gate is up
 
-void setup() {
-    Serial.begin(9600);
+void setup() {    
+
+    // Serial.begin(9600); //for debugging
 
     // Set all the pins of 74HC595 as OUTPUT
     pinMode(outputLatchPin, OUTPUT);
@@ -92,39 +98,40 @@ void setup() {
     pinMode (inputDT,INPUT_PULLUP);
     pinMode (inputSW,INPUT); 
 
+    // Interrupt pin for the buttons
     attachInterrupt(digitalPinToInterrupt(stopTriggerPin), stopTrigger, FALLING );
     attachInterrupt(digitalPinToInterrupt(startTriggerPin), playTrigger, FALLING );
 
+    // calculate the time of the beat
     eventTime_1_beat = GetBeatInterval(); // interval in ms
 
     if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-        Serial.println(F("SSD1306 allocation failed"));
+        // Serial.println(F("SSD1306 allocation failed"));
     for(;;); // Don't proceed, loop forever
     }
-
-    display.display();
+    
     display.clearDisplay();
-    display.setRotation(2);
-    display.setTextSize(2);   
+    display.setRotation(2); //set the display to rotate 180 degrees
 
-    display.setRotation(2);
+    display.setTextSize(2);       
     display.setTextColor(SSD1306_WHITE);
-    display.dim(true);
+    display.dim(true); //dim the display to 50%, better to avoid noise
 
-    display.setCursor(0,0);    
-    display.setTextSize(2);      
-    display.print(F("BigBen")); 
-    display.display();    
-    delay(200);
-    display.print(F("."));   
-    display.display();
-    delay(200);
-    display.print(F("."));   
-    display.display();
-    delay(200);
-    display.print(F("."));   
-    display.display();
-    delay(200);
+    display.setCursor(0,0);       
+
+    
+    String title[2] = { "Little", "Benny"};
+
+    for(byte i = 0; i < 2; i++){
+        display.setCursor(i*16+10,i*16);
+        for(int j = 0; j < title[i].length(); j++) {
+            display.print(title[i][j]);
+            display.display();
+            delay(50);
+        }
+        delay(200);
+    }
+    delay(300);
 
     printScreen();
 }
@@ -137,29 +144,32 @@ void loop() {
 
     if(clk_item == CLK_PLAY) {
 
-    if ( currentTime - previousTime_1 >= eventTime_1_beat ) {
-        beat_counter++;
-        gate_up = true;
-        previousTime_1 = currentTime;
-        previousTime_2 = currentTime;
+        if ( currentTime - previousTime_1 >= eventTime_1_beat ) {
+            beat_counter++;
+            byte beat_counter_diff = (beat_counter ^ beat_counter_old) & beat_counter ;
+            
+            gate_up = true;
 
-        // Serial.print(eventTime_1_beat);    
-        // Serial.print("\t");    
-        // Serial.print(beat_counter);
-        // Serial.print("\t");    
-        // Serial.println(beat_counter,BIN);
+            previousTime_1 = currentTime;
+            previousTime_2 = currentTime;
+            
+            outputClock(beat_counter_diff);
+            beat_counter_old = beat_counter;
+        }
 
         
-        outputClock(beat_counter);
-    }
-
-    
-    if ( gate_up ) {
-        if ( currentTime - previousTime_2 >= gate_lenght ) {            
-        outputClock(0b00000000);
+        if ( gate_up ) {
+            if ( currentTime - previousTime_2 >= gate_lenght ) {            
+            outputClock(0b00000000); //reset the clock output
+            }
         }
+
     }
 
+    // update the display if needed
+    if(ready2print) {
+        printScreen();
+        ready2print = false;
     }
 
  
@@ -167,31 +177,27 @@ void loop() {
 
 
 // Check if rotary switch has been pushed
-// Set the menuState
+// Set the focus item to the next item
 void CheckRotarySwitch() {
     
    currentStateSW = digitalRead(inputSW);
    if (currentStateSW != previousStateSW && currentStateSW == 0) {
-        delay(50);//debounce
+        delay(debouncetime);//debounce
         if(focusItem == enum_focus_items-1) {
             focusItem = 0;
         } else {
             focusItem++;
         }
-    //   displayMenuItem();
-        printScreen();
+    ready2print = true;
    }
    previousStateSW = currentStateSW; 
 }
 
-
-
+// Check if rotary encoder has been turned, and update the value
 void CheckRotary() {
    currentStateCLK = digitalRead(inputCLK);
    
-   if (currentStateCLK != previousStateCLK && currentStateCLK == 0){  
-
-    
+   if (currentStateCLK != previousStateCLK && currentStateCLK == 0){      
       switch(focusItem) {
         case FOCUS_BPM:     
           UpdateBPM();
@@ -201,14 +207,11 @@ void CheckRotary() {
           break;
         case FOCUS_GATE:
           UpdateGateLenght();
-          break;
-
-
-        
+          break;       
      }
-    //updating beat interval
+    //updating beat interval (depended on BPM and ppb)
     eventTime_1_beat = GetBeatInterval();    
-    printScreen();  
+    ready2print = true;
    }   
    previousStateCLK = currentStateCLK;
 }
@@ -216,64 +219,61 @@ void CheckRotary() {
 
 // Rotary updates BPM 
 void UpdateBPM() {
-  if (digitalRead(inputDT) != currentStateCLK) { 
-     bpm++; 
-   } else {
-     bpm--;
-   }
+    if (digitalRead(inputDT) != currentStateCLK) { 
+        bpm++; 
+    } else {
+        bpm--;
+    }
 
     if(bpm > max_bpm) {
-      bpm = max_bpm;
+    bpm = max_bpm;
     }
     if(bpm < min_bpm) {
-      bpm = min_bpm;
+    bpm = min_bpm;
+    }
+}
+
+// Rotary updates Gate Lenght in steps 
+void UpdateGateLenght() {
+    if (digitalRead(inputDT) != currentStateCLK) { 
+        gate_lenght+=gate_step; 
+    } else {
+        gate_lenght-=gate_step ;
     }
 
-
-//    displayBPMBasedOnStateClock();
-//    updateTimer();
+    if(gate_lenght > max_gate_lenght) {
+        gate_lenght = max_gate_lenght;
+    }
+    if(gate_lenght < min_gate_lenght) {
+        gate_lenght = min_gate_lenght;
+    }
 }
 
-// Rotary updates BPM 
-void UpdateGateLenght() {
-  if (digitalRead(inputDT) != currentStateCLK) { 
-     gate_lenght+=5; 
-   } else {
-     gate_lenght-=5;
-   }
-
-   if(gate_lenght > max_gate_lenght) {
-     gate_lenght = max_gate_lenght;
-   }
-   if(gate_lenght < min_gate_lenght) {
-     gate_lenght = min_gate_lenght;
-   }
-
-}
-
-// Rotary updates BPM 
+// Rotary updates ppb
 void Updateppb() {
-  if (digitalRead(inputDT) != currentStateCLK) { 
-     ppb*=2; 
-   } 
-   else {
-     ppb/=2;
-   }   
+    if (digitalRead(inputDT) != currentStateCLK) { 
+        ppb*=2; 
+    } 
+    else {
+        ppb/=2;
+    }   
 
-   if (ppb> max_ppb){
-    ppb = max_ppb;
-   }
+    if (ppb> max_ppb){
+        ppb = max_ppb;
+    }
     if (ppb< min_ppb){
-     ppb = min_ppb;
+    ppb = min_ppb;
     }   
 }
+
+// Print the display bpm,ppb,gate, clk_status
 void printScreen(void) {
-//bpm,ppb,clk_status
 
     display.clearDisplay();
     display.setCursor(0,0);    
     display.setTextSize(2);      
     
+    //status
     display.print(clk_status[clk_item]); 
 
     //BPM
@@ -312,33 +312,29 @@ void printScreen(void) {
     display.display();
 }
 
-//Stop button
+//Stop button, will reset outputs and counter
 void stopTrigger() {
-    delay(10);
-    clk_item= CLK_STOP;
-    // clk_item= 2;
+    delay(debouncetime);
+    clk_item= CLK_STOP;    
     beat_counter = 0;
+    beat_counter_old = 0;
     gate_up = false;
-    // outputClock(0b00000000);
-    
-    // printScreen();
+    ready2print = true;
 }
 
 // Play Pause the clock
 void playTrigger() {   
-    delay(10);
-        // clk_item = 1;
+    delay(debouncetime);        
     if(clk_item == CLK_PLAY) {
         clk_item = CLK_PAUSE;
     }
     else {
-        clk_item = CLK_PLAY;
-        // clk_item = 0;
+        clk_item = CLK_PLAY;        
     }
-    // printScreen();
+    ready2print = true;
 }
 
-// Output the clock/reset
+// Output the clock/reset to the 74HC595
 void outputClock(byte pins){
    digitalWrite(outputLatchPin, LOW);
    shiftOut(outputDataPin, outputClockPin, LSBFIRST, pins);
@@ -347,5 +343,5 @@ void outputClock(byte pins){
 
 long GetBeatInterval() {
     //ms per beat, based on BPM and ppb (pulses per beat)
-  return 60L * 1000 / (bpm * ppb*2);
+  return 60L * 1000 / (bpm * ppb * 2);
 }
