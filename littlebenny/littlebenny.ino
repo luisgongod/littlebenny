@@ -19,14 +19,13 @@
  * 
  * Since The beat period depends on the ppb and BPM. for example:
  * BPM = 120, ppb = 4, the beat period is 1/8 of a second, at Jack 7 And 16 seconds at Jack 2.
+ * (1/16s Up, 1/16 Down)
  * 
- * The Gate lenght will depend on the beat period (period-10). with the previous example,
- * that would be 115ms
- * 
- * For the maxium settings (BPM = 240, ppb = 8), that would be 21ms
- * 
+ * The Max Gate lenght will be the same as the beat period.(50% duty cycle)
+ * For the maxium settings (BPM = 240, ppb = 8), that would be 31ms 
  * For a trigger-like behaviour, the gate lenght can be set to the minimum. 
  * 
+ * TODO: increase Gate lenght to more than 50% duty cycle
  * */
 
 #include <SPI.h>
@@ -56,9 +55,7 @@
 #define min_bpm 40
 #define gate_step 5
 #define min_gate_lenght 5 
-#define min_gate_down 10 //ms. define how long the gate will be down on a beat
 #define debouncetime 20 //for buttons, in ms
-
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -367,6 +364,6 @@ void outputClock(byte pins){
 }
 
 void CalcBeatInterval() {//ms per beat, based on BPM and ppb (pulses per beat)
-  beat_time = 60L * 1000 / (bpm * ppb * 2);
-  max_gate_lenght = beat_time - min_gate_down ; // max gate lenght depends on the beat interval  
+  beat_time = 60L * 1000 / (bpm * ppb * 2); //times 2 because of dutty cycle
+  max_gate_lenght =  beat_time - (beat_time % gate_step ) ; // max gate lenght depends on the beat interval  
 }
