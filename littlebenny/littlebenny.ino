@@ -168,7 +168,7 @@ void loop() {
 
         if ( currentTime - previousTime_1 >= beat_time ) {
             beat_counter++;
-            byte beat_counter_diff = (beat_counter ^ beat_counter_old) & beat_counter ;
+            byte beat_counter_diff = beat_counter ^ beat_counter_old;
             
             gate_up = true;
 
